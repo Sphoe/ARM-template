@@ -1,0 +1,40 @@
+{ "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#", 
+"contentVersion": "1.0.0.0", 
+ "parameters": { 
+    "location": {
+  "defaultValue": "[resourceGroup().location]",
+  "type": "string", 
+  "metadata": {
+   "description": "Location for NSG" }
+    }
+ },
+ "variables": {
+    "networkSecurityGroupName": "NSG"
+  },
+"resources": [
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2023-04-01",
+      "name": "[variables('networkSecurityGroupName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "ssh_rule",
+            "properties": {
+              "description": "Locks inbound down to ssh default port 22.",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "22",
+              "sourceAddressPrefix": "*",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 123,
+              "direction": "Inbound"
+            }
+          }
+        ]
+      }
+    }
+]
+}
