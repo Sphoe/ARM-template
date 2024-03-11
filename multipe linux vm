@@ -1,0 +1,215 @@
+{
+	"$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {
+		"virtualMachineAdminUserName": {
+			"defaultValue": "vmadmin",
+			"type": "string",
+			"metadata": {
+				"description": "Administrator Username for the local admin account"
+			}
+		},
+		"adminPublicKey": {
+			"type": "securestring",
+			"metadata": {
+				"description": "SSH public key"
+			}
+		},
+		"virtualMachineNamePrefix": {
+			"defaultValue": "Pentester",
+			"type": "string",
+			"maxLength": 15,
+			"metadata": {
+				"description": "Name of the virtual machine to be created"
+			}
+		},
+		"virtualMachineCount": {
+			"type": "int",
+			"defaultValue": 3,
+			"metadata": {
+				"description": "Number of virtual machines to be created"
+			}
+		},
+		"availabilitySetName": {
+			"defaultValue": "NXAvailabilitySet",
+			"type": "string",
+			"metadata": {
+				"description": "Availability Set Name where the VM will be placed"
+			}
+		},
+		"location": {
+			"type": "string",
+			"defaultValue": "[resourceGroup().location]",
+			"metadata": {
+				"description": "Location for all resources."
+			}
+		}
+	},
+	"variables": {
+		"myVNETName": "PentestVNET",
+		"myVNETPrefix": "10.8.8.0/24",
+		"myVNETSubnet1Name": "PentestSubnet",
+		"myVNETSubnet1Prefix": "10.8.8.0/25",
+		"imagePublisher": "Canonical",
+		"imageOffer": "UbuntuServer",
+		"diagnosticStorageAccountName": "[concat('diagst', uniqueString(resourceGroup().id))]",
+		"availabilitySetPlatformFaultDomainCount": "2",
+		"availabilitySetPlatformUpdateDomainCount": "5",
+		"subnetRef": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('myVNETName'), variables('myVNETSubnet1Name'))]"
+	},
+	"resources": [
+		{
+			"name": "[variables('myVNETName')]",
+			"type": "Microsoft.Network/virtualNetworks",
+			"location": "[parameters('location')]",
+			"apiVersion": "2023-04-01",
+			"dependsOn": [],
+			"tags": {
+				"displayName": "[variables('myVNETName')]"
+			},
+			"properties": {
+				"addressSpace": {
+					"addressPrefixes": [
+						"[variables('myVNETPrefix')]"
+					]
+				},
+				"subnets": [
+					{
+						"name": "[variables('myVNETSubnet1Name')]",
+						"properties": {
+							"addressPrefix": "[variables('myVNETSubnet1Prefix')]"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "[variables('diagnosticStorageAccountName')]",
+			"type": "Microsoft.Storage/storageAccounts",
+			"location": "[parameters('location')]",
+			"apiVersion": "2016-01-01",
+			"sku": {
+				"name": "Standard_LRS"
+			},
+			"dependsOn": [],
+			"tags": {
+				"displayName": "diagnosticStorageAccount"
+			},
+			"kind": "Storage"
+		},
+		{
+			"type": "Microsoft.Compute/availabilitySets",
+			"name": "[parameters('availabilitySetName')]",
+			"apiVersion": "2017-03-30",
+			"location": "[parameters('location')]",
+			"properties": {
+				"platformFaultDomainCount": "[variables('availabilitySetPlatformFaultDomainCount')]",
+				"platformUpdateDomainCount": "[variables('availabilitySetPlatformUpdateDomainCount')]"
+			},
+			"sku": {
+				"name": "Aligned"
+			}
+		},
+		{
+			"type": "Microsoft.Compute/virtualMachines",
+			"name": "[concat(parameters('virtualMachineNamePrefix'), copyIndex(1))]",
+			"apiVersion": "2017-03-30",
+			"location": "[parameters('location')]",
+			"copy": {
+				"name": "VMcopy",
+				"count": "[parameters('virtualMachineCount')]"
+			},
+			"properties": {
+				"hardwareProfile": {
+					"vmSize": "Standard_DS1_v2"
+				},
+				"storageProfile": {
+					"imageReference": {
+						"publisher": "canonical",
+						"offer": "0001-com-ubuntu-server-jammy",
+						"sku": "22_04-lts-gen2",
+						"version": "latest"
+					},
+					"osDisk": {
+						"name": "[concat(parameters('virtualMachineNamePrefix'),copyIndex(1))]",
+						"createOption": "FromImage",
+						"managedDisk": {
+							"storageAccountType": "Premium_LRS"
+						},
+						"caching": "ReadWrite"
+					}
+				},
+				"osProfile": {
+					"computerName": "[concat(parameters('virtualMachineNamePrefix'),copyIndex(1))]",
+					"adminUsername": "[parameters('virtualMachineAdminUserName')]",
+					"linuxConfiguration": {
+						"disablePasswordAuthentication": true,
+						"ssh": {
+							"publicKeys": [
+								{
+									"path": "[concat('/home/', parameters('virtualMachineAdminUserName'), '/.ssh/authorized_keys')]",
+									"keyData": "[parameters('adminPublicKey')]"
+								}
+							]
+						}
+					}
+				},
+				"networkProfile": {
+					"networkInterfaces": [
+						{
+							"id": "[resourceId('Microsoft.Network/networkInterfaces', concat(parameters('virtualMachineNamePrefix'), copyIndex(1), '-NIC1'))]"
+						}
+					]
+				},
+				"availabilitySet": {
+					"id": "[resourceId('Microsoft.Compute/availabilitySets', parameters('availabilitySetName'))]"
+				},
+				"diagnosticsProfile": {
+					"bootDiagnostics": {
+						"enabled": true,
+						"storageUri": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('diagnosticStorageAccountName')), '2016-01-01').primaryEndpoints.blob]"
+					}
+				}
+			},
+			"dependsOn": [
+				"[concat('Microsoft.Compute/availabilitySets/', parameters('availabilitySetName'))]",
+				"[concat('Microsoft.Storage/storageAccounts/', variables('diagnosticStorageAccountName'))]",
+				"[resourceId('Microsoft.Network/networkInterfaces', concat(parameters('virtualMachineNamePrefix'), copyIndex(1), '-NIC1'))]"
+			]
+		},
+		{
+			"type": "Microsoft.Network/networkInterfaces",
+			"name": "[concat(parameters('virtualMachineNamePrefix'), copyIndex(1), '-NIC1')]",
+			"apiVersion": "2016-03-30",
+			"location": "[parameters('location')]",
+			"copy": {
+				"name": "NICCopy",
+				"count": "[parameters('virtualMachineCount')]"
+			},
+			"properties": {
+				"ipConfigurations": [
+					{
+						"name": "ipconfig1",
+						"properties": {
+							"privateIPAllocationMethod": "Dynamic",
+							"subnet": {
+								"id": "[variables('subnetRef')]"
+							}
+						}
+					}
+				],
+				"networkSecurityGroup": {
+					"id": "/subscriptions/2213e8b1-dbc7-4d54-8aff-b5e315df5e5b/resourceGroups/877-6d594032-create-and-configure-virtual-machines/providers/Microsoft.Network/networkSecurityGroups/vm1-nsg"
+				},
+				"dnsSettings": {
+					"dnsServers": []
+				},
+				"enableIPForwarding": false
+			},
+			"dependsOn": [
+				"[resourceId('Microsoft.Network/virtualNetworks/', variables('myVNETName'))]"
+			]
+		}
+	],
+	"outputs": {}
+}
